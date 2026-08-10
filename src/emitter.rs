@@ -66,6 +66,7 @@ fn emit_expr(out: &mut String, expr: &Expr) {
             }
             out.push(')');
         }
+        Expr::Cast {expr, ..} => emit_expr(out, expr)
     }
 }
 

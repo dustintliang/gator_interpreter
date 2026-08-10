@@ -26,7 +26,7 @@ lvalue = {ident}
 // gator_type must come before glsl_type so Color3<RGB> doesn't partially match as ident "Color3"
 gator_type = {ident ~ ("." ~ ident)? ~ "<" ~ ident ~ ("," ~ ident)* ~ ">"}
 glsl_type = {"float" | "vec2" | "vec3" | "vec4" | "mat4" | "mat3"}
-type_name = {gator_type | glsl_type}
+type_name = {gator_type | glsl_type | "auto"}
 
 // add_op/mul_op are named rules so they appear as nodes in the parse tree
 // without this, "+" would be invisible to the AST builder
@@ -36,7 +36,8 @@ mul_op = {"*"|"/"}
 expr = {add_expr}
 add_expr = {mul_expr ~ (add_op ~ mul_expr)*}
 mul_expr = {unary ~ (mul_op ~ unary)*}
-unary = {"-" ~ primary | primary}
+unary = {"-" ~ primary | cast_expr | primary}
+cast_expr = {primary ~ "as!" ~ type_name}
 // swizzle_expr before ident so v_Position.x doesn't match as just an ident
 primary = {call_expr | swizzle_expr | float_lit | ident}
 

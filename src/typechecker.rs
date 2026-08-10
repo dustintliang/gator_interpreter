@@ -33,10 +33,15 @@ pub fn check(program: &Program) -> Vec<TypeError> {
 fn check_stmt(stmt: &Stmt, type_map: &mut HashMap<String, GatorType>, errors: &mut Vec<TypeError>) {
     match stmt {
         Stmt::Decl {ty, name, expr} => {
-            let declared = parse_gator_type(ty);
-            let inferred = infer(expr, type_map, errors);
-            check_compatible(&declared, &inferred, name, errors);
-            type_map.insert(name.clone(), declared);
+            if ty == "auto" {
+                let inferred = infer(expr, type_map, errors);
+                type_map.insert(name.clone(), inferred);
+            } else {
+                let declared = parse_gator_type(ty);
+                let inferred = infer(expr, type_map, errors);
+                check_compatible(&declared, &inferred, name, errors);
+                type_map.insert(name.clone(), declared);
+            }
         }
         Stmt::Assign {name, expr} => {
             let inferred = infer(expr, type_map, errors);
@@ -55,6 +60,7 @@ fn infer(expr: &Expr, type_map: &HashMap<String, GatorType>, errors: &mut Vec<Ty
         Expr::Ident(name) => type_map.get(name).cloned().unwrap_or(GatorType::Unknown),
         Expr::Swizzle {..} => GatorType::Plain("float".to_string()),
         Expr::Call {name, args} => infer_call(name, args, type_map, errors),
+        Expr::Cast {ty, ..} => parse_gator_type(ty),
         Expr::BinOp {op, left, right} => {
             let lt = infer(left, type_map, errors);
             let rt = infer(right, type_map, errors);

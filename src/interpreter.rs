@@ -167,6 +167,7 @@ fn eval(expr: &Expr, env: &HashMap<String, Value>) -> Value {
                 other => panic!("unknown function: {other}")
             }
         }
+        Expr::Cast {expr, ..} => eval(expr, env)
     }
 }
 

@@ -16,7 +16,8 @@ pub enum Expr {
     Ident(String),
     Swizzle {name: String, field: String},
     BinOp {op: char, left: Box<Expr>, right: Box<Expr>},
-    Call {name: String, args: Vec<Expr>}
+    Call {name: String, args: Vec<Expr>},
+    Cast {ty: String, expr: Box<Expr>}
 }
 
 // A single line inside main()
@@ -160,6 +161,12 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
             let name = inner.next().unwrap().as_str().to_string();
             let args = inner.map(parse_expr).collect();
             Expr::Call {name, args}
+        }
+        Rule::cast_expr => {
+            let mut inner = pair.into_inner();
+            let expr = parse_expr(inner.next().unwrap());
+            let ty = inner.next().unwrap().as_str().to_string();
+            Expr::Cast {ty, expr: Box::new(expr)}
         }
         Rule::swizzle_expr => {
             let mut inner = pair.into_inner();
