@@ -13,6 +13,7 @@ pub enum TopDecl {
 #[derive(Debug)]
 pub enum Expr {
     Float(f32),
+    Int(i32),
     Ident(String),
     Swizzle {name: String, field: String},
     BinOp {op: char, left: Box<Expr>, right: Box<Expr>},
@@ -25,7 +26,8 @@ pub enum Expr {
 pub enum Stmt {
     Assign {name: String, expr: Expr},
     Decl {ty: String, name: String, expr: Expr},
-    SwizzleAssign {name: String, field: String, expr: Expr} // e.g. color.g += expr
+    SwizzleAssign {name: String, field: String, expr: Expr}, // e.g. color.g += expr
+    In {frame: String, body: Vec<Stmt>}
 }
 
 // The whole program
@@ -83,7 +85,7 @@ fn parse_top_decl(pair: pest::iterators::Pair<Rule>) -> TopDecl {
     }
 }
 
-// A stmt node always contains either an assign_stmt, decl_stmt, or compound_assign_stmt
+// A stmt node always contains one of the stmt variants
 fn parse_stmt(pair: pest::iterators::Pair<Rule>) -> Stmt {
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
@@ -102,12 +104,16 @@ fn parse_stmt(pair: pest::iterators::Pair<Rule>) -> Stmt {
         }
         Rule::compound_assign_stmt => {
             let mut parts = inner.into_inner();
-            // Ident
             let name = parts.next().unwrap().as_str().to_string();
-            // Swizzle
             let field = parts.next().unwrap().as_str().to_string();
             let expr = parse_expr(parts.next().unwrap());
             Stmt::SwizzleAssign {name, field, expr}
+        }
+        Rule::in_stmt => {
+            let mut parts = inner.into_inner();
+            let frame = parts.next().unwrap().as_str().to_string();
+            let body = parts.filter(|p| p.as_rule() == Rule::stmt).map(parse_stmt).collect();
+            Stmt::In {frame, body}
         }
         _ => unreachable!()
     }
@@ -175,6 +181,7 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
             Expr::Swizzle {name, field}
         }
         Rule::float_lit => Expr::Float(pair.as_str().parse().unwrap()),
+        Rule::int_lit => Expr::Int(pair.as_str().parse().unwrap()),
         Rule::ident => Expr::Ident(pair.as_str().to_string()),
         Rule::add_op | Rule::mul_op => unreachable!("ops are consumed by add_expr/mul_expr"),
         _ => unreachable!("{:?}", pair.as_rule())

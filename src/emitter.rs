@@ -42,12 +42,22 @@ fn emit_stmt(out: &mut String, stmt: &Stmt) {
             emit_expr(out, expr);
             out.push(';');
         }
+        // in blocks are erased — emit body at the same indentation level
+        Stmt::In {body, ..} => {
+            for (i, s) in body.iter().enumerate() {
+                if i > 0 {
+                    out.push_str("\n    ");
+                }
+                emit_stmt(out, s);
+            }
+        }
     }
 }
 
 fn emit_expr(out: &mut String, expr: &Expr) {
     match expr {
         Expr::Float(f) => write!(out, "{}", fmt_float(*f)).unwrap(),
+        Expr::Int(i) => write!(out, "{i}").unwrap(),
         Expr::Ident(name) => out.push_str(name),
         Expr::Swizzle {name, field} => write!(out, "{name}.{field}").unwrap(),
         Expr::BinOp {op, left, right} => {

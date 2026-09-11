@@ -13,25 +13,35 @@ pub enum Value {
 // Execute every statement in main() in order, storing results back into env
 pub fn run(program: &Program, env: &mut HashMap<String, Value>, type_env: &mut HashMap<String, String>) {
     for stmt in &program.stmts {
-        match stmt {
-            Stmt::Assign {name, expr} => {
-                let val = eval(expr, env);
-                env.insert(name.clone(), val);
+        run_stmt(stmt, env, type_env);
+    }
+}
+
+fn run_stmt(stmt: &Stmt, env: &mut HashMap<String, Value>, type_env: &mut HashMap<String, String>) {
+    match stmt {
+        Stmt::Assign {name, expr} => {
+            let val = eval(expr, env);
+            env.insert(name.clone(), val);
+        }
+        // Record the declared type alongside the runtime value
+        Stmt::Decl {ty, name, expr} => {
+            let val = eval(expr, env);
+            env.insert(name.clone(), val);
+            type_env.insert(name.clone(), ty.clone());
+        }
+        // Read-modify-write a single component in place
+        Stmt::SwizzleAssign {name, field, expr} => {
+            let delta = as_float(eval(expr, env));
+            let idx = swizzle_index(field);
+            match env.get_mut(name).unwrap_or_else(|| panic!("undefined: {name}")) {
+                Value::Vec3(v) => v[idx] += delta,
+                _ => panic!("{name} is not a vec3")
             }
-            // Record the declared type alongside the runtime value
-            Stmt::Decl {ty, name, expr} => {
-                let val = eval(expr, env);
-                env.insert(name.clone(), val);
-                type_env.insert(name.clone(), ty.clone());
-            }
-            // Read-modify-write a single component in place
-            Stmt::SwizzleAssign {name, field, expr} => {
-                let delta = as_float(eval(expr, env));
-                let idx = swizzle_index(field);
-                match env.get_mut(name).unwrap_or_else(|| panic!("undefined: {name}")) {
-                    Value::Vec3(v) => v[idx] += delta,
-                    _ => panic!("{name} is not a vec3")
-                }
+        }
+        // in blocks have no runtime effect — just run the body
+        Stmt::In {body, ..} => {
+            for s in body {
+                run_stmt(s, env, type_env);
             }
         }
     }
@@ -42,6 +52,9 @@ fn eval(expr: &Expr, env: &HashMap<String, Value>) -> Value {
     match expr {
         // A literal number (ex. 0.5 or 1.0)
         Expr::Float(f) => Value::Float(*f),
+
+        // Integer literals are coerced to float at runtime
+        Expr::Int(i) => Value::Float(*i as f32),
 
         // Look up the variable name in env
         Expr::Ident(name) => env.get(name).cloned().unwrap_or_else(|| panic!("undefined variable: {name}")),

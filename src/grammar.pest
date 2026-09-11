@@ -14,18 +14,21 @@ varying_decl = {"varying" ~ type_name ~ ident ~ ";"}
 // The main function body
 main_fn = {"void" ~ "main" ~ "(" ~ ")" ~ "{" ~ stmt* ~ "}"}
 
-// compound_assign_stmt must come first
-stmt = {compound_assign_stmt | assign_stmt | decl_stmt}
+// compound_assign_stmt and in_stmt must come before assign_stmt so the parser
+// doesn't greedily match their leading ident as an lvalue and then fail
+stmt = {compound_assign_stmt | in_stmt | assign_stmt | decl_stmt}
 assign_stmt = {lvalue ~ "=" ~ expr ~ ";"}
 decl_stmt = {type_name ~ ident ~ "=" ~ expr ~ ";"}
 compound_assign_stmt = {ident ~ "." ~ swizzle ~ "+=" ~ expr ~ ";"}
+// in blocks provide frame context for type checking; the frame name is a bare identifier
+in_stmt = {"in" ~ ident ~ "{" ~ stmt* ~ "}"}
 
 lvalue = {ident}
 
 // Gator type annotations are parsed and discarded at runtime
 // gator_type must come before glsl_type so Color3<RGB> doesn't partially match as ident "Color3"
 gator_type = {ident ~ ("." ~ ident)? ~ "<" ~ ident ~ ("," ~ ident)* ~ ">"}
-glsl_type = {"float" | "vec2" | "vec3" | "vec4" | "mat4" | "mat3"}
+glsl_type = {"float" | "vec2" | "vec3" | "vec4" | "mat4" | "mat3" | "int" | "bool"}
 type_name = {gator_type | glsl_type | "auto"}
 
 // add_op/mul_op are named rules so they appear as nodes in the parse tree
@@ -39,14 +42,16 @@ mul_expr = {unary ~ (mul_op ~ unary)*}
 unary = {"-" ~ primary | cast_expr | primary}
 cast_expr = {primary ~ "as!" ~ type_name}
 // swizzle_expr before ident so v_Position.x doesn't match as just an ident
-primary = {call_expr | swizzle_expr | float_lit | ident}
+// float_lit before int_lit so 1.0 doesn't match as int 1 then a stray .0
+primary = {call_expr | swizzle_expr | float_lit | int_lit | ident}
 
 call_expr = {ident ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")"}
 swizzle_expr = {ident ~ "." ~ swizzle}
 swizzle = @{ASCII_ALPHA+}
 
-// A number
-float_lit = {ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)?}
+// float_lit requires the decimal point; int_lit is a bare integer
+float_lit = @{ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT*}
+int_lit = @{ASCII_DIGIT+}
 
 // @ means atomic — treat the whole match as one token, no whitespace splitting inside
 ident = @{ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")*}

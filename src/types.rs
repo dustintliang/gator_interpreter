@@ -9,7 +9,7 @@ pub enum GatorType {
 // ex. "Cart3.Point<World>" -> Gator, "vec3" -> Plain, anything unrecognized -> Unknown
 pub fn parse_gator_type(ty: &str) -> GatorType {
     match ty {
-        "float" | "vec2" | "vec3" | "vec4" | "mat3" | "mat4" => GatorType::Plain(ty.to_string()),
+        "float" | "int" | "bool" | "vec2" | "vec3" | "vec4" | "mat3" | "mat4" => GatorType::Plain(ty.to_string()),
         _ => {
             if let Some(lt_pos) = ty.find('<') {
                 let type_part = ty[..lt_pos].trim();

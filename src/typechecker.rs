@@ -24,21 +24,28 @@ pub fn check(program: &Program) -> Vec<TypeError> {
     }
 
     for stmt in &program.stmts {
-        check_stmt(stmt, &mut type_map, &mut errors);
+        check_stmt(stmt, &mut type_map, &mut errors, None);
     }
 
     errors
 }
 
-fn check_stmt(stmt: &Stmt, type_map: &mut HashMap<String, GatorType>, errors: &mut Vec<TypeError>) {
+// frame_ctx is Some(frame) when inside an `in Frame { }` block
+fn check_stmt(stmt: &Stmt, type_map: &mut HashMap<String, GatorType>, errors: &mut Vec<TypeError>, frame_ctx: Option<&str>) {
     match stmt {
         Stmt::Decl {ty, name, expr} => {
             if ty == "auto" {
                 let inferred = infer(expr, type_map, errors);
+                if let Some(ctx) = frame_ctx {
+                    check_frame_ctx(&inferred, ctx, name, errors);
+                }
                 type_map.insert(name.clone(), inferred);
             } else {
                 let declared = parse_gator_type(ty);
                 let inferred = infer(expr, type_map, errors);
+                if let Some(ctx) = frame_ctx {
+                    check_frame_ctx(&declared, ctx, name, errors);
+                }
                 check_compatible(&declared, &inferred, name, errors);
                 type_map.insert(name.clone(), declared);
             }
@@ -50,6 +57,11 @@ fn check_stmt(stmt: &Stmt, type_map: &mut HashMap<String, GatorType>, errors: &m
             }
         }
         Stmt::SwizzleAssign {expr, ..} => { infer(expr, type_map, errors); }
+        Stmt::In {frame, body} => {
+            for s in body {
+                check_stmt(s, type_map, errors, Some(frame.as_str()));
+            }
+        }
     }
 }
 
@@ -57,8 +69,14 @@ fn check_stmt(stmt: &Stmt, type_map: &mut HashMap<String, GatorType>, errors: &m
 fn infer(expr: &Expr, type_map: &HashMap<String, GatorType>, errors: &mut Vec<TypeError>) -> GatorType {
     match expr {
         Expr::Float(_) => GatorType::Plain("float".to_string()),
+        Expr::Int(_) => GatorType::Plain("int".to_string()),
         Expr::Ident(name) => type_map.get(name).cloned().unwrap_or(GatorType::Unknown),
-        Expr::Swizzle {..} => GatorType::Plain("float".to_string()),
+        Expr::Swizzle {field, ..} => match field.len() {
+            2 => GatorType::Plain("vec2".to_string()),
+            3 => GatorType::Plain("vec3".to_string()),
+            4 => GatorType::Plain("vec4".to_string()),
+            _ => GatorType::Plain("float".to_string())
+        },
         Expr::Call {name, args} => infer_call(name, args, type_map, errors),
         Expr::Cast {ty, ..} => parse_gator_type(ty),
         Expr::BinOp {op, left, right} => {
@@ -78,6 +96,20 @@ fn infer_call(name: &str, args: &[Expr], type_map: &HashMap<String, GatorType>, 
     let mut sink = Vec::new();
     let arg_types: Vec<GatorType> = args.iter().map(|a| infer(a, type_map, &mut sink)).collect();
     match name {
+        "vec3" => match arg_types.as_slice() {
+            // vec3(float, float, float) or vec3(int, float, float) etc.
+            [a, b, c] if is_scalar(a) && is_scalar(b) && is_scalar(c) => GatorType::Plain("vec3".to_string()),
+            // vec3(vec4) — truncate
+            [GatorType::Plain(a)] if a == "vec4" => GatorType::Plain("vec3".to_string()),
+            _ => GatorType::Unknown
+        },
+        "vec4" => match arg_types.as_slice() {
+            // vec4(float, float, float, float)
+            [a, b, c, d] if is_scalar(a) && is_scalar(b) && is_scalar(c) && is_scalar(d) => GatorType::Plain("vec4".to_string()),
+            // vec4(vec3, float) or vec4(vec2, float, float) — lift into homogeneous form
+            [GatorType::Plain(a), b] if (a == "vec3" || a == "vec2") && is_scalar(b) => GatorType::Plain("vec4".to_string()),
+            _ => GatorType::Unknown
+        },
         "dot" | "length" | "distance" => GatorType::Plain("float".to_string()),
         "max" | "min" | "pow" | "clamp" | "mix" | "smoothstep" | "step" => GatorType::Plain("float".to_string()),
         // Frame-preserving: return same scheme+frames as first arg, subtype not tracked
@@ -92,10 +124,26 @@ fn infer_call(name: &str, args: &[Expr], type_map: &HashMap<String, GatorType>, 
     }
 }
 
+// True for types that can be used as scalar components (float or int literals)
+fn is_scalar(t: &GatorType) -> bool {
+    matches!(t, GatorType::Plain(s) if s == "float" || s == "int")
+}
+
 fn check_add(lt: &GatorType, rt: &GatorType, errors: &mut Vec<TypeError>) -> GatorType {
     match (lt, rt) {
         (GatorType::Unknown, _) | (_, GatorType::Unknown) => GatorType::Unknown,
-        (GatorType::Plain(_), GatorType::Plain(_)) => lt.clone(),
+        (GatorType::Plain(a), GatorType::Plain(b)) => {
+            if a == b {
+                // Both the same plain type (int+int, float+float, vec3+vec3, etc.)
+                lt.clone()
+            } else if a == "unannotated" || b == "unannotated" {
+                // One side is a result of plain*plain — defer to the named side
+                if b == "unannotated" { lt.clone() } else { rt.clone() }
+            } else {
+                errors.push(TypeError {message: format!("type mismatch in addition: {a} + {b}")});
+                GatorType::Unknown
+            }
+        }
         _ if lt == rt => lt.clone(),
         _ => {
             errors.push(TypeError {message: format!("type mismatch in addition: {:?} + {:?}", lt, rt)});
@@ -110,7 +158,7 @@ fn check_mul(lt: &GatorType, rt: &GatorType, errors: &mut Vec<TypeError>) -> Gat
         // float * Gator -> Gator (scalar multiplication, frame preserved)
         (GatorType::Plain(s), GatorType::Gator {..}) if s == "float" => rt.clone(),
         (GatorType::Gator {..}, GatorType::Plain(s)) if s == "float" => lt.clone(),
-        // Plain * Plain - both unannotated, produce unannotated result
+        // Plain * Plain — both unannotated, produce unannotated result
         (GatorType::Plain(_), GatorType::Plain(_)) => GatorType::Plain("unannotated".to_string()),
         // Gator * Gator -> apply frame rules
         (GatorType::Gator {frames: lf, ..}, GatorType::Gator {frames: rf, ..}) => {
@@ -155,8 +203,22 @@ fn check_compatible(declared: &GatorType, inferred: &GatorType, name: &str, erro
         // Normalize/reflect return Gator with no subtype — check scheme+frames only
         (GatorType::Gator {scheme: ds, frames: df, ..}, GatorType::Gator {scheme: is, subtype: None, frames: inf})
             if ds == is && df == inf => {}
+        // Plain named type assigned to Gator variable — idiomatic Gator: the annotation gives
+        // the value its frame. Only "unannotated" (result of Plain*Plain) is disallowed.
+        (GatorType::Gator {..}, GatorType::Plain(p)) if p != "unannotated" => {}
         _ => {
             errors.push(TypeError {message: format!("type mismatch for '{name}': declared {:?} but expression has type {:?}", declared, inferred)});
+        }
+    }
+}
+
+// Validate that a single-frame Gator type matches the enclosing in-block frame
+fn check_frame_ctx(ty: &GatorType, frame: &str, name: &str, errors: &mut Vec<TypeError>) {
+    if let GatorType::Gator {frames, ..} = ty {
+        if frames.len() == 1 && frames[0] != frame {
+            errors.push(TypeError {
+                message: format!("'{name}' is in frame '{}' but declared inside 'in {frame}'", frames[0])
+            });
         }
     }
 }
